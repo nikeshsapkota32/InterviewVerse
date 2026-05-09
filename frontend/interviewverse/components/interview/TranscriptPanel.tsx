@@ -1,21 +1,23 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-
-const transcript = [
-  { who: "ai", text: "Let's start. Take your time reading the problem." },
-  { who: "user", text: "Okay so we need indices of two numbers summing to target…" },
-  { who: "ai", text: "Right. What's your first approach?" },
-  { who: "user", text: "Brute force nested loop, then optimize with a hash map." },
-  { who: "ai", text: "Good instinct. What's the time complexity of the optimized version?" },
-  { who: "user", text: "O(n) — single pass, hash ops are O(1) average." },
-] as const;
+import { useEffect, useRef, useState } from "react";
+import { useInterviewStore } from "@/lib/stores/interviewStore";
 
 export default function TranscriptPanel() {
   const ref = useRef<HTMLDivElement>(null);
+  const { transcript, sendTranscriptMessage } = useInterviewStore();
+  const [input, setInput] = useState("");
+
   useEffect(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, []);
+  }, [transcript]);
+
+  function handleSend() {
+    const text = input.trim();
+    if (!text) return;
+    sendTranscriptMessage(text);
+    setInput("");
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -36,6 +38,11 @@ export default function TranscriptPanel() {
         ref={ref}
         className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-[12px]"
       >
+        {transcript.length === 0 && (
+          <p className="text-[11px] italic text-muted-foreground">
+            Waiting for AI recruiter...
+          </p>
+        )}
         {transcript.map((m, i) => (
           <div key={i} className="flex items-start gap-2">
             {m.who === "ai" ? (
@@ -44,46 +51,42 @@ export default function TranscriptPanel() {
               </div>
             ) : (
               <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-secondary text-[9px] font-medium text-foreground">
-                A
+                U
               </div>
             )}
-            <p
-              className={`flex-1 leading-relaxed ${
-                m.who === "ai" ? "text-foreground" : "text-muted-foreground"
-              }`}
-            >
-              {m.text}
-            </p>
+            <div className="min-w-0 flex-1">
+              {m.time && (
+                <span className="mr-1 font-mono text-[10px] text-muted-foreground">{m.time}</span>
+              )}
+              <span
+                className={`leading-relaxed ${
+                  m.who === "ai" ? "text-foreground" : "text-muted-foreground"
+                }`}
+              >
+                {m.text}
+              </span>
+            </div>
           </div>
         ))}
-
-        {/* Currently transcribing */}
-        <div className="flex items-start gap-2 opacity-70">
-          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-secondary text-[9px] font-medium text-foreground">
-            A
-          </div>
-          <div className="flex flex-1 items-center gap-2 italic leading-relaxed text-muted-foreground">
-            <span>So we iterate through and check the map…</span>
-            <span className="inline-block h-3 w-px animate-pulse bg-foreground" />
-          </div>
-        </div>
       </div>
 
-      {/* Footer: speaking indicator */}
-      <div className="flex items-center justify-between border-t border-border bg-card/40 px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <div className="flex items-end gap-0.5">
-            {[3, 6, 4, 7, 5, 8, 4, 6, 3].map((h, i) => (
-              <span
-                key={i}
-                className="w-0.5 animate-pulse rounded-full bg-lime-400"
-                style={{ height: `${h * 1.5}px`, animationDelay: `${i * 100}ms` }}
-              />
-            ))}
-          </div>
-          <span className="text-[10px] text-muted-foreground">You&apos;re speaking</span>
+      {/* Text input for typing responses (fallback for no mic) */}
+      <div className="border-t border-border bg-card/40 px-3 py-2">
+        <div className="flex gap-2">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSend()}
+            placeholder="Type a response..."
+            className="flex-1 rounded-md border border-border bg-secondary/30 px-2.5 py-1.5 text-[11px] text-foreground placeholder:text-muted-foreground outline-none focus:border-lime-400/40"
+          />
+          <button
+            onClick={handleSend}
+            className="rounded-md bg-lime-400/10 px-2.5 py-1.5 text-[11px] font-medium text-lime-400 hover:bg-lime-400/20"
+          >
+            Send
+          </button>
         </div>
-        <span className="text-[10px] text-muted-foreground">en-US</span>
       </div>
     </div>
   );

@@ -1,10 +1,27 @@
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import InterviewTopBar from "@/components/interview/InterviewTopBar";
 import QuestionPanel from "@/components/interview/QuestionPanel";
 import CodeEditor from "@/components/interview/CodeEditor";
 import WebcamPanel from "@/components/interview/WebcamPanel";
 import TranscriptPanel from "@/components/interview/TranscriptPanel";
+import { useInterviewStore } from "@/lib/stores/interviewStore";
 
 export default function InterviewPage() {
+  const { startInterview, connectSocket, sessionId, problem, isRunning } = useInterviewStore();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!sessionId) {
+      startInterview({ difficulty: "Medium" }).then((id) => {
+        connectSocket(id);
+      }).catch(console.error);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="flex h-screen flex-col">
       <InterviewTopBar />
