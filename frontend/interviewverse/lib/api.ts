@@ -91,6 +91,19 @@ export const resumeApi = {
   },
 };
 
+// ─── Video Feedback ───────────────────────────────────────────────────────────
+
+export const videoApi = {
+  submitMetrics: (sessionId: string, eyeContactHistory: number[], postureSamples: string[], durationSeconds: number) =>
+    api.post(`/api/video/${sessionId}/feedback`, {
+      session_id: sessionId,
+      eye_contact_history: eyeContactHistory,
+      avg_eye_contact: eyeContactHistory.length ? Math.round(eyeContactHistory.reduce((a, b) => a + b, 0) / eyeContactHistory.length) : 0,
+      posture_samples: postureSamples,
+      duration_seconds: durationSeconds,
+    }),
+};
+
 // ─── WebSocket ───────────────────────────────────────────────────────────────
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";

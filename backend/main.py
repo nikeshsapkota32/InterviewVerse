@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from routers import auth, dashboard, interviews, results, resume, ws
+from routers import auth, dashboard, interviews, results, resume, ws, video
 
 app = FastAPI(
     title="InterviewVerse API",
@@ -34,6 +34,7 @@ app.include_router(interviews.router)
 app.include_router(results.router)
 app.include_router(resume.router)
 app.include_router(ws.router)
+app.include_router(video.router)
 
 
 @app.exception_handler(Exception)

@@ -3,10 +3,10 @@
 import Link from "next/link";
 
 const navLinks = [
-  { label: "Features", href: "#features" },
-  { label: "How it works", href: "#how" },
-  { label: "Pricing", href: "#pricing" },
-  { label: "Docs", href: "#docs" },
+  { label: "Features", href: "/#features" },
+  { label: "How it works", href: "/how-it-works" },
+  { label: "Pricing", href: "/#pricing" },
+  { label: "Docs", href: "/docs" },
 ];
 
 export default function Navbar() {
