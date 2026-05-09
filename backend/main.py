@@ -15,12 +15,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS — allow Next.js dev server
+# CORS — allow Next.js dev server and production
+import os as _os
+_extra_origins = _os.getenv("ALLOWED_ORIGINS", "").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://interviewverse.vercel.app",
+        *[o.strip() for o in _extra_origins if o.strip()],
     ],
     allow_credentials=True,
     allow_methods=["*"],

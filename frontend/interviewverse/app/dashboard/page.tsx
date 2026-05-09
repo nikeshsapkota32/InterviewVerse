@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   ArrowUpRight,
   Clock,
@@ -114,6 +115,7 @@ function Stat({
 /* ─────────────────────── Recent sessions ─────────────────────── */
 
 function RecentSessions({ sessions }: { sessions: { id: number; title: string; company: string; type: string; score: number; when: string }[] }) {
+  const router = useRouter();
   return (
     <div className="rounded-2xl border border-border bg-card/40 lg:col-span-2">
       <div className="flex items-center justify-between border-b border-border px-5 py-4">
@@ -121,13 +123,17 @@ function RecentSessions({ sessions }: { sessions: { id: number; title: string; c
           <h2 className="text-sm font-medium text-foreground">Recent sessions</h2>
           <p className="text-xs text-muted-foreground">Your last {sessions.length} interviews</p>
         </div>
-        <button className="text-xs text-muted-foreground transition-colors hover:text-foreground">View all →</button>
+        <Link href="/dashboard/interviews" className="text-xs text-muted-foreground transition-colors hover:text-foreground">View all →</Link>
       </div>
       <ul className="divide-y divide-border">
         {sessions.map((s) => {
           const Icon = s.type === "Technical" ? Terminal : s.type === "Behavioral" ? Mic : FileText;
           return (
-            <li key={s.id} className="group flex cursor-pointer items-center gap-4 px-5 py-3.5 transition-colors hover:bg-secondary/30">
+            <li
+              key={s.id}
+              className="group flex cursor-pointer items-center gap-4 px-5 py-3.5 transition-colors hover:bg-secondary/30"
+              onClick={() => router.push(`/results?session=${s.id}`)}
+            >
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-secondary/60 text-muted-foreground">
                 <Icon className="h-4 w-4" />
               </div>
