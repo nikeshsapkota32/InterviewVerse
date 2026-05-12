@@ -39,6 +39,9 @@ export const authApi = {
     api.post<AuthResponse>("/api/auth/signup", { name, email, password }),
   login: (email: string, password: string) =>
     api.post<AuthResponse>("/api/auth/login", { email, password }),
+  me: () => api.get<UserOut>("/api/auth/me"),
+  upgradePlan: (plan: string) =>
+    api.post<UserOut>("/api/auth/upgrade-plan", { plan }),
 };
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
@@ -93,6 +96,24 @@ export const resumeApi = {
 
 // ─── Video Feedback ───────────────────────────────────────────────────────────
 
+export interface FrameAnalysisResult {
+  face_detected: boolean;
+  // MediaPipe
+  landmark_count: number | null;
+  eye_contact_from_landmarks: number | null;
+  mediapipe_available: boolean;
+  // FER
+  emotion: string | null;
+  emotion_confidence: number | null;
+  emotion_scores: Record<string, number> | null;
+  fer_available: boolean;
+  // InsightFace
+  det_score: number | null;
+  face_verified: boolean | null;
+  similarity_score: number | null;
+  insightface_available: boolean;
+}
+
 export const videoApi = {
   submitMetrics: (sessionId: string, eyeContactHistory: number[], postureSamples: string[], durationSeconds: number) =>
     api.post(`/api/video/${sessionId}/feedback`, {
@@ -102,6 +123,20 @@ export const videoApi = {
       posture_samples: postureSamples,
       duration_seconds: durationSeconds,
     }),
+
+  /** Store the user's face embedding at the start of a session (InsightFace). */
+  registerFace: (sessionId: string, base64Image: string) =>
+    api.post<{ success: boolean; message: string }>(
+      `/api/video/${sessionId}/register-face`,
+      { base64_image: base64Image }
+    ),
+
+  /** Send a single webcam frame for MediaPipe + FER + InsightFace analysis. */
+  analyzeFrame: (sessionId: string, base64Image: string) =>
+    api.post<FrameAnalysisResult>(
+      `/api/video/${sessionId}/analyze-frame`,
+      { base64_image: base64Image }
+    ),
 };
 
 // ─── WebSocket ───────────────────────────────────────────────────────────────

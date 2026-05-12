@@ -1,5 +1,5 @@
 import random
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from models.interview import (
     CreateInterviewRequest,
     CodeSubmitRequest,
@@ -12,12 +12,16 @@ from models.interview import (
 import database as db
 from services.code_executor import run_code
 from services.ai_recruiter import get_hint, generate_feedback
+from services.auth import get_optional_user
 
 router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 
 
 @router.post("")
-async def create_interview(request: CreateInterviewRequest):
+async def create_interview(
+    request: CreateInterviewRequest,
+    current_user: dict | None = Depends(get_optional_user),
+):
     """Create a new interview session."""
     if request.problem_id:
         problem = db.get_problem(request.problem_id)
@@ -29,6 +33,7 @@ async def create_interview(request: CreateInterviewRequest):
         )
 
     session_id = db.create_session({
+        "user_id": current_user["id"] if current_user else None,
         "problem_id": problem["id"],
         "problem": problem,
         "interview_type": request.interview_type.value if request.interview_type else "Coding",
@@ -113,7 +118,11 @@ async def get_hint_endpoint(session_id: str, request: HintRequest):
 
 
 @router.post("/{session_id}/end")
-async def end_interview(session_id: str, request: EndInterviewRequest):
+async def end_interview(
+    session_id: str,
+    request: EndInterviewRequest,
+    current_user: dict | None = Depends(get_optional_user),
+):
     """End the interview session and generate results."""
     session = db.get_session(session_id)
     if not session:
@@ -124,7 +133,6 @@ async def end_interview(session_id: str, request: EndInterviewRequest):
     if request.transcript:
         db.update_session(session_id, {"transcript": request.transcript})
 
-    # Calculate score based on code submission and test results
     score = _calculate_score(session, request)
     feedback = generate_feedback(
         problem_id=session["problem_id"],
@@ -138,8 +146,20 @@ async def end_interview(session_id: str, request: EndInterviewRequest):
     mins = duration_secs // 60
     secs = duration_secs % 60
 
+    hf = _hf_enrich(
+        session=session,
+        code=request.code or session.get("code", ""),
+        transcript=request.transcript or session.get("transcript", []),
+        problem=problem,
+        score=score,
+    )
+
+    # Determine user_id: prefer the authenticated user, fall back to session's stored user_id
+    user_id = (current_user["id"] if current_user else None) or session.get("user_id")
+
     result = {
         "session_id": session_id,
+        "user_id": user_id,
         "score": score,
         "rating": _score_to_rating(score),
         "problem_title": problem["title"],
@@ -151,37 +171,92 @@ async def end_interview(session_id: str, request: EndInterviewRequest):
         "summary": _generate_summary(score),
         "skill_breakdown": [
             {"label": "Technical", "score": min(100, score + random.randint(-5, 10)), "change": random.randint(2, 8)},
-            {"label": "Communication", "score": min(100, score - 4 + random.randint(-3, 8)), "change": random.randint(0, 5)},
+            {"label": "Communication", "score": hf["comm_score"], "change": random.randint(0, 5)},
             {"label": "Problem-solving", "score": min(100, score + 2 + random.randint(-3, 5)), "change": random.randint(1, 6)},
-            {"label": "Code quality", "score": min(100, score - 7 + random.randint(-5, 10)), "change": random.randint(-2, 4)},
+            {"label": "Code quality", "score": hf["code_score"], "change": random.randint(-2, 4)},
         ],
         "strengths": feedback.get("strengths", []),
         "improvements": feedback.get("improvements", []),
         "key_moments": _generate_key_moments(request.transcript),
         "speech": {
             "pace_wpm": random.randint(130, 155),
-            "filler_words": random.randint(5, 20),
-            "clarity_percent": random.randint(82, 96),
+            "filler_words": hf["filler_words"],
+            "clarity_percent": hf["clarity_percent"],
             "pace_over_time": [random.randint(115, 160) for _ in range(12)],
         },
-        "body_language": {
-            "eye_contact_percent": random.randint(75, 95),
-            "posture": "Stable",
-            "energy": "High",
-            "eye_contact_over_time": [random.randint(60, 98) for _ in range(16)],
-        },
+        "body_language": hf["body_language"],
         "transcript": _format_transcript(request.transcript or session.get("transcript", [])),
         "recommendations": [
             {"title": "Graph algorithms", "description": "Build on your hash map skills with BFS and DFS patterns.", "duration": "30 min", "level": "Medium", "icon": "🔗"},
             {"title": "System design — Caching layer", "description": "Apply your problem-solving instincts to design rounds.", "duration": "45 min", "level": "Hard", "icon": "🏗"},
             {"title": "Behavioral — Tell me about a time", "description": "Practice STAR-method answers. Slow down your delivery.", "duration": "20 min", "level": "Easy", "icon": "💬"},
         ],
+        "hf_analysis": hf.get("meta", {}),
     }
 
-    db.save_result(session_id, result)
-    db.update_session(session_id, {"ended": True, "score": score})
+    db.save_result(session_id, result, user_id=user_id)
+    db.update_session(session_id, {"ended": True, "score": score, "user_id": user_id})
 
     return {"result_id": session_id, "score": score}
+
+
+def _hf_enrich(session, code, transcript, problem, score):
+    meta: dict = {}
+
+    comm_score = min(100, score - 4 + random.randint(-3, 8))
+    clarity_percent = random.randint(82, 96)
+    filler_words = random.randint(5, 20)
+    try:
+        from services.hf_models import get_communication_model
+        comm_model = get_communication_model()
+        if comm_model is not None:
+            comm_analysis = comm_model.analyze_transcript(transcript)
+            comm_score = min(100, comm_analysis.get("communication_score", comm_score))
+            clarity_percent = comm_analysis.get("clarity_percent", clarity_percent)
+            filler_words = comm_analysis.get("filler_words", filler_words)
+            meta["communication"] = {
+                "model": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+                "avg_sentiment": comm_analysis.get("avg_sentiment"),
+                "messages_analysed": len(comm_analysis.get("message_scores", [])),
+            }
+    except Exception:
+        pass
+
+    code_score = min(100, score - 7 + random.randint(-5, 10))
+    try:
+        from services.hf_models import get_code_model
+        code_model = get_code_model()
+        if code_model is not None and code.strip():
+            code_analysis = code_model.analyze_code(code, problem.get("description", ""))
+            relevance = code_analysis.get("relevance_score", score)
+            code_score = min(100, round(score * 0.5 + relevance * 0.5))
+            meta["code_quality"] = {
+                "model": "microsoft/codebert-base",
+                "relevance_score": relevance,
+                "line_count": code_analysis.get("line_count"),
+                "has_comments": code_analysis.get("has_comments"),
+            }
+    except Exception:
+        pass
+
+    stored_bl = session.get("body_language", {})
+    body_language = {
+        "eye_contact_percent": stored_bl.get("eye_contact_percent", random.randint(75, 95)),
+        "posture": stored_bl.get("posture", "Stable"),
+        "energy": stored_bl.get("energy", "High"),
+        "eye_contact_over_time": stored_bl.get("eye_contact_over_time", [random.randint(60, 98) for _ in range(16)]),
+    }
+    if stored_bl:
+        meta["body_language"] = {"source": "webcam_analysis"}
+
+    return {
+        "comm_score": comm_score,
+        "code_score": code_score,
+        "clarity_percent": clarity_percent,
+        "filler_words": filler_words,
+        "body_language": body_language,
+        "meta": meta,
+    }
 
 
 def _calculate_score(session: dict, request: EndInterviewRequest) -> int:

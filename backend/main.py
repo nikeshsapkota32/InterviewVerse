@@ -1,18 +1,32 @@
 """
 InterviewVerse FastAPI Backend
-Run with: uvicorn main:app --reload --port 8000
+Run with: uvicorn main:app --reload --port 8080
 """
 import traceback
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from routers import auth, dashboard, interviews, results, resume, ws, video
+from routers import auth, dashboard, interviews, results, resume, ws, video, speech
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Seed demo users on every startup (idempotent — skips if already seeded)
+    try:
+        import seed_db
+        seed_db.seed()
+    except Exception as e:
+        print(f"[seed] warning: {e}")
+    yield
+
 
 app = FastAPI(
     title="InterviewVerse API",
     description="AI-powered interview practice platform backend",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS — allow Next.js dev server and production
@@ -39,6 +53,7 @@ app.include_router(results.router)
 app.include_router(resume.router)
 app.include_router(ws.router)
 app.include_router(video.router)
+app.include_router(speech.router)
 
 
 @app.exception_handler(Exception)

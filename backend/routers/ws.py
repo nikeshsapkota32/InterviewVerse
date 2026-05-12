@@ -41,6 +41,10 @@ async def interview_websocket(websocket: WebSocket, session_id: str):
 
     problem_id = session["problem_id"]
 
+    # Track transcript and question_index locally to avoid stale DB reads
+    transcript: list = list(session.get("transcript", []))
+    question_index: int = session.get("question_index", 0)
+
     # Send opening message from AI recruiter
     opening = get_opening_message(problem_id)
     await websocket.send_json({
@@ -49,8 +53,6 @@ async def interview_websocket(websocket: WebSocket, session_id: str):
         "who": "ai",
     })
 
-    # Add to transcript
-    transcript = session.get("transcript", [])
     transcript.append({"time": _format_time(0), "who": "ai", "text": opening})
     db.update_session(session_id, {"transcript": transcript})
 
@@ -64,24 +66,23 @@ async def interview_websocket(websocket: WebSocket, session_id: str):
                 await websocket.send_json({"type": "pong"})
 
             elif msg_type == "transcript":
-                # User said something
                 user_text = message.get("text", "").strip()
                 elapsed = message.get("elapsed_seconds", 0)
 
                 if user_text:
-                    transcript = session.get("transcript", [])
                     transcript.append({"time": _format_time(elapsed), "who": "user", "text": user_text})
                     db.update_session(session_id, {"transcript": transcript})
 
-                    # Get AI follow-up
-                    await asyncio.sleep(0.5)  # brief thinking pause
-                    question_index = session.get("question_index", 1)
+                    # Brief thinking pause
+                    await asyncio.sleep(0.5)
+
                     ai_response = get_followup_question(problem_id, question_index, transcript)
+                    question_index += 1
 
                     transcript.append({"time": _format_time(elapsed + 2), "who": "ai", "text": ai_response})
                     db.update_session(session_id, {
                         "transcript": transcript,
-                        "question_index": question_index + 1,
+                        "question_index": question_index,
                     })
 
                     await websocket.send_json({
@@ -90,7 +91,6 @@ async def interview_websocket(websocket: WebSocket, session_id: str):
                         "who": "ai",
                     })
 
-                    # Send updated transcript
                     await websocket.send_json({
                         "type": "transcript_update",
                         "transcript": transcript,

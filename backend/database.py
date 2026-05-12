@@ -1,16 +1,77 @@
 """
-In-memory database for InterviewVerse.
-In production, replace with PostgreSQL or MongoDB.
+SQLite-backed database for InterviewVerse.
+Uses Python's built-in sqlite3 — no extra dependencies required.
 """
-from typing import Dict, Any
+import sqlite3
 import uuid
+import json
+import os
+from datetime import datetime, timezone
+from contextlib import contextmanager
 
-# In-memory stores
-users: Dict[str, Dict[str, Any]] = {}
-sessions: Dict[str, Dict[str, Any]] = {}
-results: Dict[str, Dict[str, Any]] = {}
+DB_PATH = os.path.join(os.path.dirname(__file__), "interviewverse.db")
 
-# Problem bank
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    email         TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    initials      TEXT NOT NULL,
+    plan          TEXT NOT NULL DEFAULT 'free',
+    created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id                 TEXT PRIMARY KEY,
+    user_id            TEXT,
+    problem_id         TEXT NOT NULL,
+    problem_json       TEXT NOT NULL,
+    interview_type     TEXT NOT NULL DEFAULT 'Coding',
+    code               TEXT DEFAULT '',
+    transcript_json    TEXT DEFAULT '[]',
+    question_index     INTEGER DEFAULT 0,
+    started            INTEGER DEFAULT 1,
+    ended              INTEGER DEFAULT 0,
+    score              INTEGER,
+    body_language_json TEXT,
+    created_at         TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS results (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT,
+    result_json TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+"""
+
+
+@contextmanager
+def _conn():
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA foreign_keys=ON")
+    try:
+        yield con
+        con.commit()
+    finally:
+        con.close()
+
+
+def init_db():
+    with _conn() as con:
+        con.executescript(_SCHEMA)
+
+
+# Initialise schema on import
+init_db()
+
+# ── Problem bank ─────────────────────────────────────────────────────────────
+
 PROBLEMS = {
     "two-sum": {
         "id": "two-sum",
@@ -139,41 +200,144 @@ def get_random_problem(difficulty: str = None) -> dict:
     return random.choice(problems)
 
 
+# ── User helpers ──────────────────────────────────────────────────────────────
+
 def create_user(user_data: dict) -> dict:
     user_id = str(uuid.uuid4())
-    users[user_id] = {**user_data, "id": user_id}
-    return users[user_id]
+    now = datetime.now(timezone.utc).isoformat()
+    with _conn() as con:
+        con.execute(
+            "INSERT INTO users (id, name, email, password_hash, initials, plan, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                user_id,
+                user_data["name"],
+                user_data["email"],
+                user_data["password_hash"],
+                user_data["initials"],
+                user_data.get("plan", "free"),
+                now,
+            ),
+        )
+    return {**user_data, "id": user_id}
 
 
 def get_user_by_email(email: str) -> dict | None:
-    for user in users.values():
-        if user["email"] == email:
-            return user
-    return None
+    with _conn() as con:
+        row = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    return dict(row) if row else None
 
 
 def get_user_by_id(user_id: str) -> dict | None:
-    return users.get(user_id)
+    with _conn() as con:
+        row = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    return dict(row) if row else None
 
+
+def update_user_plan(user_id: str, plan: str) -> None:
+    with _conn() as con:
+        con.execute("UPDATE users SET plan = ? WHERE id = ?", (plan, user_id))
+
+
+# ── Session helpers ───────────────────────────────────────────────────────────
 
 def create_session(session_data: dict) -> str:
     session_id = str(uuid.uuid4())
-    sessions[session_id] = {**session_data, "session_id": session_id}
+    now = datetime.now(timezone.utc).isoformat()
+    with _conn() as con:
+        con.execute(
+            "INSERT INTO sessions "
+            "(id, user_id, problem_id, problem_json, interview_type, code, transcript_json, "
+            " question_index, started, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                session_data.get("user_id"),
+                session_data["problem_id"],
+                json.dumps(session_data["problem"]),
+                session_data.get("interview_type", "Coding"),
+                session_data.get("code", ""),
+                json.dumps(session_data.get("transcript", [])),
+                session_data.get("question_index", 0),
+                1,
+                now,
+            ),
+        )
     return session_id
 
 
+def _row_to_session(row) -> dict:
+    d = dict(row)
+    d["problem"] = json.loads(d.pop("problem_json"))
+    d["transcript"] = json.loads(d.pop("transcript_json"))
+    d["body_language"] = json.loads(d["body_language_json"]) if d.get("body_language_json") else {}
+    d["started"] = bool(d["started"])
+    d["ended"] = bool(d["ended"])
+    return d
+
+
 def get_session(session_id: str) -> dict | None:
-    return sessions.get(session_id)
+    with _conn() as con:
+        row = con.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    return _row_to_session(row) if row else None
 
 
 def update_session(session_id: str, updates: dict) -> None:
-    if session_id in sessions:
-        sessions[session_id].update(updates)
+    if not updates:
+        return
+    fields, values = [], []
+    for k, v in updates.items():
+        if k == "transcript":
+            fields.append("transcript_json = ?")
+            values.append(json.dumps(v))
+        elif k == "body_language":
+            fields.append("body_language_json = ?")
+            values.append(json.dumps(v))
+        elif k in (
+            "problem_id", "interview_type", "code", "question_index",
+            "started", "ended", "score", "user_id",
+        ):
+            fields.append(f"{k} = ?")
+            values.append(v)
+    if fields:
+        values.append(session_id)
+        with _conn() as con:
+            con.execute(
+                f"UPDATE sessions SET {', '.join(fields)} WHERE id = ?", values
+            )
 
 
-def save_result(session_id: str, result_data: dict) -> None:
-    results[session_id] = result_data
+def get_user_sessions(user_id: str) -> list[dict]:
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT * FROM sessions WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+    return [_row_to_session(r) for r in rows]
+
+
+# ── Result helpers ────────────────────────────────────────────────────────────
+
+def save_result(session_id: str, result_data: dict, user_id: str = None) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _conn() as con:
+        con.execute(
+            "INSERT OR REPLACE INTO results (id, user_id, result_json, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (session_id, user_id, json.dumps(result_data), now),
+        )
 
 
 def get_result(session_id: str) -> dict | None:
-    return results.get(session_id)
+    with _conn() as con:
+        row = con.execute("SELECT result_json FROM results WHERE id = ?", (session_id,)).fetchone()
+    return json.loads(row["result_json"]) if row else None
+
+
+def get_user_results(user_id: str) -> list[dict]:
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT result_json FROM results WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+    return [json.loads(r["result_json"]) for r in rows]
